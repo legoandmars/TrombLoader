@@ -10,6 +10,7 @@ using UnityEngine;
 using UnityEngine.Playables;
 using UnityEngine.UI;
 using UnityEngine.Video;
+using static UnityEngine.UIElements.UxmlAttributeDescription;
 
 namespace TrombLoader.CustomTracks.Backgrounds;
 
@@ -29,13 +30,23 @@ public class CustomBackground : AbstractBackground
 
     public override GameObject Load(BackgroundContext ctx)
     {
-        var bg = Bundle.LoadAsset<GameObject>("assets/_background.prefab");
+        bool needsShaderReplacement = Application.platform == RuntimePlatform.OSXPlayer;
 
+#pragma warning disable 0618
+        Material[] existingMaterials = needsShaderReplacement ? Object.FindObjectsOfTypeAll(typeof(Material)) as Material[] : null;
+#pragma warning restore 0618
+
+        var bg = Bundle.LoadAsset<GameObject>("assets/_background.prefab");
         // MacOS Shader Handling
         // May need to be expanded to other platforms eventually, but for now only check for invalid shaders on mac
-        if (Application.platform == RuntimePlatform.OSXPlayer)
+        if (needsShaderReplacement && existingMaterials != null)
         {
-            LoadShaderBundle(bg);
+#pragma warning disable 0618
+            Material[] existingMaterialsAfterLoad = Object.FindObjectsOfTypeAll(typeof(Material)) as Material[];
+#pragma warning restore 0618
+
+            var newMaterials = existingMaterialsAfterLoad.Where(x => !existingMaterials.Contains(x)).ToList();
+            LoadShaderBundle(bg, newMaterials);
         }
 
         var managers = bg.GetComponentsInChildren<TromboneEventManager>();
@@ -288,7 +299,7 @@ public class CustomBackground : AbstractBackground
         base.Dispose();
     }
 
-    private void LoadShaderBundle(GameObject bg)
+    private void LoadShaderBundle(GameObject bg, List<Material> newMaterials)
     {
         // first add base game shaders, which should NOT be overwritten by shadercache shaders
         var shaderCache = new Dictionary<string, Shader>(Plugin.Instance.ShaderHelper.BaseGameShaderCache);
@@ -313,11 +324,14 @@ public class CustomBackground : AbstractBackground
             shaderCache[songSpecificShader.Key] = songSpecificShader.Value;
         }
 
+        // unsure if the first three are necessary anymore or if they're completely superceded by the FindObjectsOfTypeAll call
+        // somebody should look into this before pushing this to prod to avoid unnecessary GetComponentsInChildren calls
         var materials = new[]
         {
             bg.GetComponentsInChildren<Renderer>(true).SelectMany(renderer => renderer.materials),
             bg.GetComponentsInChildren<TMP_Text>(true).Select(textMesh => textMesh.fontSharedMaterial),
-            bg.GetComponentsInChildren<Graphic>(true).Select(graphics => graphics.material)
+            bg.GetComponentsInChildren<Graphic>(true).Select(graphics => graphics.material),
+            newMaterials
         }.SelectMany(x => x);
 
         foreach (var material in materials)
